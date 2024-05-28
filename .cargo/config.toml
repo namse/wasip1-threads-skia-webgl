@@ -1,0 +1,16 @@
+[build]
+target = "wasm32-wasip1-threads"
+rustflags = [
+    "--cfg",
+    "tokio_unstable",
+    "-C",
+    "target-feature=-crt-static",
+    "-L",
+    "/opt/wasi-sdk/share/wasi-sysroot/lib/wasm32-wasip1-threads",
+]
+
+[env]
+CLANGCC = "/opt/wasi-sdk/bin/clang"
+CLANGCXX = "/opt/wasi-sdk/bin/clang++"
+CC = "/opt/wasi-sdk/bin/clang"
+CXX = "/opt/wasi-sdk/bin/clang++"

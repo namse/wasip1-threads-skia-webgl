@@ -1,0 +1,25 @@
+[build]
+target = "wasm32-wasip1-threads"
+rustflags = [
+    "-C",
+    "target-feature=-crt-static,+atomics,+bulk-memory,+mutable-globals",
+    "-C",
+    "linker=/opt/wasi-sdk/bin/clang",
+    "-C",
+    "ar=/opt/wasi-sdk/bin/llvm-ar",
+    "-C",
+    "link-arg=-fuse-ld=/opt/wasi-sdk/bin/wasm-ld",
+    "-C",
+    "link-arg=-pthread",
+]
+
+[env]
+CLANGCC = "/opt/wasi-sdk/bin/clang"
+CLANGCXX = "/opt/wasi-sdk/bin/clang++"
+# SDKTARGETSYSROOT = "/opt/wasi-sdk/share/wasi-sysroot"
+CC = "/opt/wasi-sdk/bin/clang"
+CXX = "/opt/wasi-sdk/bin/clang++"
+# WASI_SYSROOT = "/opt/wasi-sdk/share/wasi-sysroot"
+# CLANG_INCLUDE_PATH = "/opt/wasi-sdk/lib/clang/18/include"
+# CXXFLAGS = "--sysroot=$WASI_SYSROOT -I$CLANG_INCLUDE_PATH"
+# LDFLAGS = "--sysroot=$WASI_SYSROOT"

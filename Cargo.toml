@@ -1,0 +1,27 @@
+[package]
+name = "namui-runtime-wasm"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+tokio = { path = "./tokio/tokio", features = [
+    "sync",
+    "macros",
+    "io-util",
+    "rt",
+    "rt-multi-thread",
+    "time",
+    # "full",
+] }
+skia-safe = { path = "./rust-skia/skia-safe", features = ["gl"] }
+
+[package.metadata.wasm-pack.profile.dev.wasm-bindgen]
+dwarf-debug-info = true
+
+[profile.release]
+lto = true
+opt-level = 3
+
+[profile.dev]
+lto = true
+opt-level = 2
