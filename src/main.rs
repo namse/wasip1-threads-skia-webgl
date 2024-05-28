@@ -25,13 +25,27 @@ async fn real_main() {
 
     let mut context = skia_safe::gpu::direct_contexts::make_gl(interface, None)
         .expect("failed to create gl direct context");
+    println!("context");
 
-    let backend_render_target = skia_safe::gpu::backend_render_targets::make_gl(
-        (100, 100),
-        1,
-        0,
-        skia_safe::gpu::gl::FramebufferInfo::default(),
-    );
+    let framebuffer_info = {
+        let mut fboid: i32 = 0;
+        unsafe {
+            glGetIntegerv(
+                0x8ca6, // gl::FRAMEBUFFER_BINDING
+                &mut fboid,
+            )
+        };
+
+        skia_safe::gpu::gl::FramebufferInfo {
+            fboid: fboid.try_into().unwrap(),
+            format: skia_safe::gpu::gl::Format::RGBA8.into(),
+            protected: skia_safe::gpu::Protected::No,
+        }
+    };
+
+    let backend_render_target =
+        skia_safe::gpu::backend_render_targets::make_gl((100, 100), 1, 0, framebuffer_info);
+    println!("backend_render_target");
 
     let surface = skia_safe::gpu::surfaces::wrap_backend_render_target(
         &mut context,
@@ -42,6 +56,7 @@ async fn real_main() {
         None,
     )
     .expect("failed to wrap backend render target");
+    println!("surface")
 }
 
 extern "C" {
@@ -54,14 +69,29 @@ extern "C" {
 
 }
 
+const ALIGN: usize = 4;
 #[no_mangle]
 pub extern "C" fn _malloc(size: usize) -> *mut c_void {
-    let layout = std::alloc::Layout::from_size_align(size, 1).unwrap();
-    unsafe { std::alloc::alloc(layout) as *mut c_void }
+    println!("malloc: {:?}", size);
+    // make sure, result should be power of 2
+
+    unsafe {
+        let aligned_size = (size + (ALIGN - 1)) & !(ALIGN - 1); // round up to nearest multiple of align
+        let layout = std::alloc::Layout::from_size_align(aligned_size, ALIGN).unwrap();
+        println!("layout: {:?}", layout);
+        let buf = std::alloc::alloc(layout);
+        println!("buf: {:?}", buf);
+        buf as *mut c_void
+    }
 }
 
 #[no_mangle]
 pub extern "C" fn _free(ptr: *mut c_void) {
-    let layout = std::alloc::Layout::from_size_align(1, 1).unwrap();
-    unsafe { std::alloc::dealloc(ptr as *mut u8, layout) }
+    println!("free: {:?}", ptr);
+    unsafe {
+        std::alloc::dealloc(
+            ptr as *mut u8,
+            std::alloc::Layout::from_size_align(0, ALIGN).unwrap(),
+        );
+    }
 }
