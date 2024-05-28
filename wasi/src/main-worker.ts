@@ -16,8 +16,8 @@ const wasi = new WASI(args, env, fds);
 console.debug("hello world!", wasmUrl);
 
 const memory = new WebAssembly.Memory({
-  initial: 17,
-  maximum: 17,
+  initial: 21,
+  maximum: 21,
   shared: true,
 });
 

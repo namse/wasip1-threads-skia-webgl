@@ -10,121 +10,95 @@ impl PlatformDetails for Wasm32Wasip1Threads {
     fn gn_args(&self, config: &BuildConfiguration, builder: &mut GnArgsBuilder) {
         let features = &config.features;
 
-        gn_args(config, builder);
+        generic::gn_args(config, builder);
 
         builder
-            .arg("target_cpu", quote("wasm"))
+            .arg("cc", quote("/opt/wasi-sdk/bin/clang"))
+            .arg("cxx", quote("/opt/wasi-sdk/bin/clang++"))
+            .arg("ar", quote("/opt/wasi-sdk/bin/llvm-ar"))
             .arg("skia_gl_standard", quote("webgl"))
             .arg("skia_use_webgl", yes_if(features.gpu()))
-            .arg("skia_use_no_png_encode", yes())
-            .arg("skia_use_libpng_decode", no())
-            // skia_enable_graphite
-            // .arg("skia_use_dawn", yes())
-            .cflags(clang_flags());
+            .arg("target_cpu", quote("wasm"))
+            // The custom embedded font manager is enabled by default on WASM, but depends
+            // on the undefined symbol `SK_EMBEDDED_FONTS`. Enable the custom empty font
+            // manager instead so typeface creation still works.
+            // See https://github.com/rust-skia/rust-skia/issues/648
+            .arg("skia_enable_fontmgr_custom_embedded", no())
+            .arg("skia_enable_fontmgr_custom_empty", yes())
+            .cflags(
+                "
+                -DSK_BUILD_FOR_UNIX
+                -D__EMSCRIPTEN__
+
+                -mllvm
+                -wasm-enable-sjlj
+                -mtail-call
+                -D_WASI_EMULATED_MMAN
+                -pthread
+
+                -fvisibility=default
+
+                -Xclang -target-feature -Xclang +atomics
+                -Xclang -target-feature -Xclang +bulk-memory
+                -Xclang -target-feature -Xclang +mutable-globals
+
+                --sysroot=/opt/wasi-sdk/share/wasi-sysroot
+                -I/opt/wasi-sdk/lib/clang/18/include
+                -I/opt/emscripten/system/include
+                "
+                .split_whitespace()
+                .map(|s| s.to_string()),
+            );
     }
 
     fn bindgen_args(&self, _target: &Target, builder: &mut BindgenArgsBuilder) {
-        builder.args(bindgen_flags())
+        builder.args(
+            "
+            -DSK_BUILD_FOR_UNIX
+            -D__EMSCRIPTEN__
+
+            -mllvm
+            -wasm-enable-sjlj
+            -mtail-call
+            -D_WASI_EMULATED_MMAN
+            -pthread
+
+            -fvisibility=default
+
+            -Xclang -target-feature -Xclang +atomics
+            -Xclang -target-feature -Xclang +bulk-memory
+            -Xclang -target-feature -Xclang +mutable-globals
+
+            --sysroot=/opt/wasi-sdk/share/wasi-sysroot
+            -I/opt/wasi-sdk/lib/clang/18/include
+            -I/opt/emscripten/system/include
+            "
+            .split_whitespace()
+            .map(|s| s.to_string()),
+        );
     }
 
-    fn link_libraries(&self, features: &Features) -> Vec<String> {
-        link_libraries(features)
+    fn link_libraries(&self, _features: &Features) -> Vec<String> {
+        vec![
+            format!("c++"),
+            format!("c++abi"),
+            format!("c++experimental"),
+            format!("c-printscan-long-double"),
+            format!("c-printscan-no-floating-point"),
+            format!("c"),
+            format!("crypt"),
+            format!("dl"),
+            format!("m"),
+            format!("pthread"),
+            format!("resolv"),
+            format!("rt"),
+            format!("setjmp"),
+            format!("util"),
+            format!("wasi-emulated-getpid"),
+            format!("wasi-emulated-mman"),
+            format!("wasi-emulated-process-clocks"),
+            format!("wasi-emulated-signal"),
+            format!("xnet"),
+        ]
     }
-}
-
-pub fn gn_args(config: &BuildConfiguration, builder: &mut GnArgsBuilder) {
-    generic::gn_args(config, builder);
-}
-
-pub fn link_libraries(features: &Features) -> Vec<String> {
-    // let mut libs = vec![
-        // "stdc++",
-        // // "fontconfig",
-        // // "freetype",
-        // "wasi-emulated-mman",
-        // "setjmp",
-    // ];
-
-    // if skia::env::use_system_libraries() {
-    //     libs.push("png16");
-    //     libs.push("z");
-    //     libs.push("icudata");
-    //     libs.push("icui18n");
-    //     libs.push("icuio");
-    //     libs.push("icutest");
-    //     libs.push("icutu");
-    //     libs.push("icuuc");
-    //     libs.push("harfbuzz");
-    //     libs.push("expat");
-
-    //     if features.webp_encode || features.webp_decode {
-    //         libs.push("webp");
-    //     }
-    // }
-
-    // if skia::env::use_system_libraries() || cfg!(feature = "use-system-jpeg-turbo") {
-    //     libs.push("jpeg");
-    // }
-
-    // libs.iter().map(|l| l.to_string()).collect()
-    vec![
-    ]
-}
-fn clang_flags() -> Vec<String> {
-    vec![
-        format!("-I/opt/wasi-sdk/lib/clang/18/include"),
-        format!("-I/home/ubuntu/emscripten/system/include"),
-        format!("-mllvm"),
-        format!("-wasm-enable-sjlj"),
-        format!("--sysroot=/opt/wasi-sdk/share/wasi-sysroot"),
-        format!("-DSK_BUILD_FOR_UNIX"),
-        format!("-mtail-call"),
-        format!("-D_WASI_EMULATED_MMAN"),
-        // -Wno-error=register?
-        // format!("-xc++"),
-        format!("-fvisibility=default"), // https://github.com/rust-lang/rust-bindgen/issues/2624#issuecomment-1708117271
-        format!("-pthread"),
-        format!("-Xclang"),
-        format!("-target-feature"),
-        format!("-Xclang"),
-        format!("+atomics"),
-        format!("-Xclang"),
-        format!("-target-feature"),
-        format!("-Xclang"),
-        format!("+bulk-memory"),
-        format!("-Xclang"),
-        format!("-target-feature"),
-        format!("-Xclang"),
-        format!("+mutable-globals"),
-        format!("-D__EMSCRIPTEN__"),
-    ]
-}
-
-fn bindgen_flags() -> Vec<String> {
-    vec![
-        format!("--sysroot=/opt/wasi-sdk/share/wasi-sysroot"),
-        // format!("-I/opt/wasi-sdk/lib/clang/18/include"),
-        // format!("-I/opt/wasi-sdk/share/wasi-sysroot/include/wasm32-wasip1-threads/c++/v1"),
-        format!("-mllvm"),
-        format!("-wasm-enable-sjlj"),
-        format!("-DSK_BUILD_FOR_UNIX"),
-        format!("-mtail-call"),
-        format!("-D_WASI_EMULATED_MMAN"),
-        format!("-xc++"),
-        format!("-fvisibility=default"), // https://github.com/rust-lang/rust-bindgen/issues/2624#issuecomment-1708117271
-        format!("-pthread"),
-        format!("-Xclang"),
-        format!("-target-feature"),
-        format!("-Xclang"),
-        format!("+atomics"),
-        format!("-Xclang"),
-        format!("-target-feature"),
-        format!("-Xclang"),
-        format!("+bulk-memory"),
-        format!("-Xclang"),
-        format!("-target-feature"),
-        format!("-Xclang"),
-        format!("+mutable-globals"),
-        format!("-D__EMSCRIPTEN__"),
-    ]
 }

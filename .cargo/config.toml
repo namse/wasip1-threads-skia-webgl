@@ -9,8 +9,14 @@ rustflags = [
     "/opt/wasi-sdk/share/wasi-sysroot/lib/wasm32-wasip1-threads",
 ]
 
+[target.wasm32-wasip1-threads]
+linker = "/opt/wasi-sdk/bin/wasm-ld"
+ar = "/opt/wasi-sdk/bin/llvm-ar"
+
 [env]
 CLANGCC = "/opt/wasi-sdk/bin/clang"
 CLANGCXX = "/opt/wasi-sdk/bin/clang++"
 CC = "/opt/wasi-sdk/bin/clang"
 CXX = "/opt/wasi-sdk/bin/clang++"
+WASI_SDK_PATH = "/opt/wasi-sdk"
+CLANG_PATH = "/opt/wasi-sdk/bin/clang"

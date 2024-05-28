@@ -13,16 +13,35 @@ async fn real_main() {
     .await
     .unwrap();
 
-    // skia_safe::gpu::backend_render_targets::make_gl((100, 100), None, 8, info)
     let interface = skia_safe::gpu::gl::Interface::new_load_with(|addr| match addr {
         "glGetString" => glGetString as _,
         "glGetStringi" => glGetStringi as _,
         "glGetIntegerv" => glGetIntegerv as _,
-        _ => todo!(),
+        _ => todo!("unknown function on gl interface: {}", addr),
     })
-    .unwrap();
+    .expect("failed to load gl interface");
 
     println!("good!, interface: {:?}", interface);
+
+    let mut context = skia_safe::gpu::direct_contexts::make_gl(interface, None)
+        .expect("failed to create gl direct context");
+
+    let backend_render_target = skia_safe::gpu::backend_render_targets::make_gl(
+        (100, 100),
+        1,
+        0,
+        skia_safe::gpu::gl::FramebufferInfo::default(),
+    );
+
+    let surface = skia_safe::gpu::surfaces::wrap_backend_render_target(
+        &mut context,
+        &backend_render_target,
+        skia_safe::gpu::SurfaceOrigin::TopLeft,
+        skia_safe::ColorType::RGBA8888,
+        None,
+        None,
+    )
+    .expect("failed to wrap backend render target");
 }
 
 extern "C" {

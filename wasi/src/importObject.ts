@@ -50,6 +50,15 @@ export function createImportObject({
         malloc,
         free,
       }),
+      ...implSetJmp({
+        memory,
+        malloc,
+        free,
+      }),
+      ...implMath({
+        memory,
+        malloc,
+      }),
       glGetStringi: () => {
         throw new Error("glGetStringi is not implemented");
       },
@@ -864,4 +873,316 @@ function assert(condition: boolean, text: string) {
   if (!condition) {
     throw new Error(text);
   }
+}
+
+// https://github.com/yamt/wasi-libc/blob/a0c169f4facefc1c0d99b000c756e24ef103c2db/libc-top-half/musl/src/setjmp/wasm32/rt.c
+function implSetJmp({
+  memory,
+  malloc,
+  free,
+}: {
+  memory: WebAssembly.Memory;
+  malloc: (size: number) => number;
+  free: (ptr: number) => void;
+}): {
+  saveSetjmp: Function;
+  testSetjmp: Function;
+  getTempRet0: Function;
+} {
+  // struct entry {
+  //   uint32_t id;
+  //   uint32_t label;
+  // };
+  // static _Thread_local struct state {
+  //   uint32_t id;
+  //   uint32_t size;
+  //   struct arg {
+  //           void *env;
+  //           int val;
+  //   } arg;
+  // } g_state;
+
+  const gState = {
+    id: 0,
+    size: 0,
+    arg: {
+      env: 0,
+      val: 0,
+    },
+  };
+
+  // /*
+  // * table is allocated at the entry of functions which call setjmp.
+  // *
+  // *   table = malloc(40);
+  // *   size = 4;
+  // *   *(int *)table = 0;
+  // */
+  // _Static_assert(sizeof(struct entry) * (4 + 1) <= 40, "entry size");
+  // void *
+  // saveSetjmp(void *env, uint32_t label, void *table, uint32_t size)
+  // {
+  //   struct state *state = &g_state;
+  //   struct entry *e = table;
+  //   uint32_t i;
+  //   for (i = 0; i < size; i++) {
+  //           if (e[i].id == 0) {
+  //                   uint32_t id = ++state->id;
+  //                   *(uint32_t *)env = id;
+  //                   e[i].id = id;
+  //                   e[i].label = label;
+  //                   /*
+  //                    * note: only the first word is zero-initialized
+  //                    * by the caller.
+  //                    */
+  //                   e[i + 1].id = 0;
+  //                   goto done;
+  //           }
+  //   }
+  //   size *= 2;
+  //   void *p = realloc(table, sizeof(*e) * (size + 1));
+  //   if (p == NULL) {
+  //           __builtin_trap();
+  //   }
+  //   table = p;
+  // done:
+  //   state->size = size;
+  //   return table;
+  // }
+
+  function saveSetjmp(env: number, label: number, table: number, size: number) {
+    const state = gState;
+    const entry = new Uint32Array(memory.buffer, table, size * 2);
+    for (let i = 0; i < size; i++) {
+      if (entry[i * 2] == 0) {
+        const id = ++state.id;
+        new Uint32Array(memory.buffer, env, 1)[0] = id;
+        entry[i * 2] = id;
+        entry[i * 2 + 1] = label;
+        entry[(i + 1) * 2] = 0;
+        return table;
+      }
+    }
+    size *= 2;
+    const p = malloc(size * 2 * 4);
+    if (p == 0) {
+      throw new Error("realloc failed");
+    }
+    new Uint32Array(memory.buffer, p, size * 2).set(entry);
+    free(table);
+    return p;
+  }
+
+  // uint32_t
+  // testSetjmp(unsigned int id, void *table, uint32_t size)
+  // {
+  //   struct entry *e = table;
+  //   uint32_t i;
+  //   for (i = 0; i < size; i++) {
+  //           if (e[i].id == id) {
+  //                   return e[i].label;
+  //           }
+  //   }
+  //   return 0;
+  // }
+
+  function testSetjmp(id: number, table: number, size: number) {
+    const entry = new Uint32Array(memory.buffer, table, size * 2);
+    for (let i = 0; i < size; i++) {
+      if (entry[i * 2] == id) {
+        return entry[i * 2 + 1];
+      }
+    }
+    return 0;
+  }
+
+  // uint32_t
+  // getTempRet0()
+  // {
+  //   struct state *state = &g_state;
+  //   return state->size;
+  // }
+
+  function getTempRet0() {
+    return gState.size;
+  }
+
+  return { saveSetjmp, testSetjmp, getTempRet0 };
+}
+
+function implMath({
+  memory,
+  malloc,
+}: {
+  memory: WebAssembly.Memory;
+  malloc: (size: number) => number;
+}) {
+  /* function types
+    (type (;63;) (func (param i64 i64 i64 i64) (result i32)))
+    (type (;64;) (func (param i32 i64 i64 i64 i64)))
+    (type (;65;) (func (param i64 i64) (result i32)))
+    (type (;6;) (func (param i32 i32)))
+    (type (;66;) (func (param i32 f64)))
+    (type (;18;) (func (param i32 f32)))
+    (type (;67;) (func (param i64 i64) (result f32)))
+    (type (;68;) (func (param i64 i64) (result f64)))
+  */
+  /* implements
+    (import "env" "__eqtf2" (func $__eqtf2 (;148;) (type 63)))
+    (import "env" "__unordtf2" (func $__unordtf2 (;149;) (type 63)))
+    (import "env" "__addtf3" (func $__addtf3 (;150;) (type 64)))
+    (import "env" "__multf3" (func $__multf3 (;151;) (type 64)))
+    (import "env" "__fixunstfsi" (func $__fixunstfsi (;152;) (type 65)))
+    (import "env" "__floatunsitf" (func $__floatunsitf (;153;) (type 6)))
+    (import "env" "__subtf3" (func $__subtf3 (;154;) (type 64)))
+    (import "env" "__netf2" (func $__netf2 (;155;) (type 63)))
+    (import "env" "__fixtfsi" (func $__fixtfsi (;156;) (type 65)))
+    (import "env" "__floatsitf" (func $__floatsitf (;157;) (type 6)))
+    (import "env" "__extenddftf2" (func $__extenddftf2 (;158;) (type 66)))
+    (import "env" "__extendsftf2" (func $__extendsftf2 (;159;) (type 18)))
+    (import "env" "__divtf3" (func $__divtf3 (;160;) (type 64)))
+    (import "env" "__getf2" (func $__getf2 (;161;) (type 63)))
+    (import "env" "__trunctfsf2" (func $__trunctfsf2 (;162;) (type 67)))
+    (import "env" "__trunctfdf2" (func $__trunctfdf2 (;163;) (type 68)))
+    */
+
+  const eqtf2 = (a: number, b: number): number => {
+    const a1 = new Float64Array(memory.buffer, a, 1)[0];
+    const b1 = new Float64Array(memory.buffer, b, 1)[0];
+    return a1 === b1 ? 1 : 0;
+  };
+
+  const unordtf2 = (a: number, b: number): number => {
+    const a1 = new Float64Array(memory.buffer, a, 1)[0];
+    const b1 = new Float64Array(memory.buffer, b, 1)[0];
+    return isNaN(a1) || isNaN(b1) ? 1 : 0;
+  };
+
+  const addtf3 = (a: number, b: number, c: number, d: number) => {
+    const a1 = new Float64Array(memory.buffer, a, 1)[0];
+    const b1 = new Float64Array(memory.buffer, b, 1)[0];
+    const c1 = new Float64Array(memory.buffer, c, 1)[0];
+    const d1 = new Float64Array(memory.buffer, d, 1)[0];
+    const result = a1 + b1 + c1 + d1;
+    return mallocFloat64(result);
+  };
+
+  const multf3 = (a: number, b: number, c: number, d: number) => {
+    const a1 = new Float64Array(memory.buffer, a, 1)[0];
+    const b1 = new Float64Array(memory.buffer, b, 1)[0];
+    const c1 = new Float64Array(memory.buffer, c, 1)[0];
+    const d1 = new Float64Array(memory.buffer, d, 1)[0];
+    const result = a1 * b1 * c1 * d1;
+    return mallocFloat64(result);
+  };
+
+  const fixunstfsi = (a: number, b: number) => {
+    const a1 = new Float64Array(memory.buffer, a, 1)[0];
+    return Math.floor(a1);
+  };
+
+  const floatunsitf = (a: number) => {
+    const a1 = new Uint32Array(memory.buffer, a, 1)[0];
+    return a1;
+  };
+
+  const subtf3 = (a: number, b: number, c: number, d: number) => {
+    const a1 = new Float64Array(memory.buffer, a, 1)[0];
+    const b1 = new Float64Array(memory.buffer, b, 1)[0];
+    const c1 = new Float64Array(memory.buffer, c, 1)[0];
+    const d1 = new Float64Array(memory.buffer, d, 1)[0];
+    const result = a1 - b1 - c1 - d1;
+    return mallocFloat64(result);
+  };
+
+  const netf2 = (a: number, b: number) => {
+    const a1 = new Float64Array(memory.buffer, a, 1)[0];
+    const b1 = new Float64Array(memory.buffer, b, 1)[0];
+    return a1 !== b1 ? 1 : 0;
+  };
+
+  const fixtfsi = (a: number, b: number) => {
+    const a1 = new Float64Array(memory.buffer, a, 1)[0];
+    return Math.floor(a1);
+  };
+
+  const floatsitf = (a: number) => {
+    const a1 = new Int32Array(memory.buffer, a, 1)[0];
+    return a1;
+  };
+
+  const extenddftf2 = (a: number) => {
+    const a1 = new Float64Array(memory.buffer, a, 1)[0];
+    return mallocFloat64(a1);
+  };
+
+  const extendsftf2 = (a: number) => {
+    const a1 = new Float32Array(memory.buffer, a, 1)[0];
+    return mallocFloat32(a1);
+  };
+
+  const divtf3 = (a: number, b: number, c: number, d: number) => {
+    const a1 = new Float64Array(memory.buffer, a, 1)[0];
+    const b1 = new Float64Array(memory.buffer, b, 1)[0];
+    const c1 = new Float64Array(memory.buffer, c, 1)[0];
+    const d1 = new Float64Array(memory.buffer, d, 1)[0];
+    const result = a1 / b1 / c1 / d1;
+    return mallocFloat64(result);
+  };
+
+  const getf2 = (a: number, b: number) => {
+    const a1 = new Float64Array(memory.buffer, a, 1)[0];
+    const b1 = new Float64Array(memory.buffer, b, 1)[0];
+    return a1 > b1 ? 1 : 0;
+  };
+
+  const trunctfsf2 = (a: number, b: number) => {
+    const a1 = new Float64Array(memory.buffer, a, 1)[0];
+    return mallocFloat32(a1);
+  };
+
+  const trunctfdf2 = (a: number, b: number) => {
+    const a1 = new Float64Array(memory.buffer, a, 1)[0];
+    return mallocFloat64(a1);
+  };
+
+  function mallocFloat64(value: number) {
+    const ptr = malloc(8);
+    new Float64Array(memory.buffer, ptr, 1)[0] = value;
+    return ptr;
+  }
+
+  function mallocFloat32(value: number) {
+    const ptr = malloc(4);
+    new Float32Array(memory.buffer, ptr, 1)[0] = value;
+    return ptr;
+  }
+
+  // (import "env" "__letf2" (func $__letf2 (;174;) (type 63)))
+
+  const letf2 = (a: number, b: number): number => {
+    const a1 = new Float64Array(memory.buffer, a, 1)[0];
+    const b1 = new Float64Array(memory.buffer, b, 1)[0];
+    return a1 < b1 ? 1 : 0;
+  };
+
+  return {
+    __eqtf2: eqtf2,
+    __unordtf2: unordtf2,
+    __addtf3: addtf3,
+    __multf3: multf3,
+    __fixunstfsi: fixunstfsi,
+    __floatunsitf: floatunsitf,
+    __subtf3: subtf3,
+    __netf2: netf2,
+    __fixtfsi: fixtfsi,
+    __floatsitf: floatsitf,
+    __extenddftf2: extenddftf2,
+    __extendsftf2: extendsftf2,
+    __divtf3: divtf3,
+    __getf2: getf2,
+    __trunctfsf2: trunctfsf2,
+    __trunctfdf2: trunctfdf2,
+    __letf2: letf2,
+  };
 }
