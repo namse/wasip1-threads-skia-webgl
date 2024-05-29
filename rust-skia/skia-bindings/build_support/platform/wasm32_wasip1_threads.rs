@@ -99,6 +99,8 @@ impl PlatformDetails for Wasm32Wasip1Threads {
             format!("wasi-emulated-process-clocks"),
             format!("wasi-emulated-signal"),
             format!("xnet"),
+            // /opt/wasi-sdk/lib/clang/18/lib/wasip1/libclang_rt.builtins-wasm32.a
+            format!("clang_rt.builtins-wasm32"),
         ]
     }
 }

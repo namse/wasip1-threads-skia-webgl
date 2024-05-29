@@ -62,6 +62,15 @@ async fn real_main() {
     println!("canvas clear to black");
     context.flush(None);
     println!("context flush");
+
+    surface.canvas().draw_line(
+        (1, 1),
+        (50, 50),
+        &skia_safe::paint::Paint::new(skia_safe::Color4f::new(1.0, 0.0, 0.0, 1.0), None),
+    );
+    println!("canvas clear to black");
+    context.flush(None);
+    println!("context flush");
 }
 
 extern "C" {

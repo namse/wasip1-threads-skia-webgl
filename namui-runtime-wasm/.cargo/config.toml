@@ -5,6 +5,7 @@ rustflags = [
     "tokio_unstable",
     "-Ctarget-feature=-crt-static",
     "-L/opt/wasi-sdk/share/wasi-sysroot/lib/wasm32-wasip1-threads",
+    "-L/opt/wasi-sdk/lib/clang/18/lib/wasip1",
     # wasm-ld --initial-memory 20MB
     "-Clink-arg=--initial-memory=20971520",
     # wasm-ld --max-memory 1G
