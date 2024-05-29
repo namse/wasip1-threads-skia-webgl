@@ -723,7 +723,7 @@ function envGl({
         throw new Error("webgl is not set");
       }
       const srcData = new Uint8Array(memory.buffer, data_ptr, size);
-      webgl.bufferSubData(target, offset, srcData, size);
+      webgl.bufferSubData(target, offset, srcData, 0, size);
     },
     /**
      * void glBufferData(
@@ -741,6 +741,11 @@ function envGl({
       if (!webgl) {
         throw new Error("webgl is not set");
       }
+
+      if (!data_ptr) {
+        return webgl.bufferData(target, size, usage);
+      }
+
       const srcData = new Uint8Array(memory.buffer, data_ptr, size);
       webgl.bufferData(target, srcData, usage);
     },
@@ -883,7 +888,52 @@ function envGl({
       webgl.uniform4fv(uniformLocation, value);
     },
     glViewport: webgl?.viewport.bind(webgl) || (() => {}),
-    glVertexAttribPointer: webgl?.vertexAttribPointer.bind(webgl) || (() => {}),
+    /**
+     * void glVertexAttribPointer(
+     *  GLuint index,
+     *  GLint size,
+     *  GLenum type,
+     *  GLboolean normalized,
+     *  GLsizei stride,
+     *  const void * pointer);
+     */
+    glVertexAttribPointer: (
+      index: number,
+      size: number,
+      type: number,
+      normalized: number,
+      stride: number,
+      pointer: number
+    ) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      if (
+        ![
+          webgl.BYTE,
+          webgl.SHORT,
+          webgl.UNSIGNED_BYTE,
+          webgl.UNSIGNED_SHORT,
+          webgl.FLOAT,
+          webgl.HALF_FLOAT,
+          webgl.INT,
+          webgl.UNSIGNED_INT,
+          webgl.INT_2_10_10_10_REV,
+          webgl.UNSIGNED_INT_2_10_10_10_REV,
+        ].includes(type as any)
+      ) {
+        throw new Error(`Invalid type: ${type}`);
+      }
+
+      webgl.vertexAttribPointer(
+        index,
+        size,
+        type,
+        !!normalized,
+        stride,
+        pointer
+      );
+    },
     glVertexAttrib4fv: () => {
       throw new Error("not implemented");
       // return webgl!.vertexAttrib4fv();

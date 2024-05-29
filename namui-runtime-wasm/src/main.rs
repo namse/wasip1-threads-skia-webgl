@@ -89,12 +89,20 @@ async fn real_main() {
 
         canvas.draw_line((1, 1), (50, 50), &paint_stroke);
         println!("canvas draw line");
-
-        canvas.draw_rect(skia_safe::Rect::new(5.0, 5.0, 20.0, 20.0), &paint_fill);
-        canvas.draw_rect(skia_safe::Rect::new(5.0, 5.0, 20.0, 20.0), &paint_stroke);
-        println!("canvas draw rect");
     }
 
+    context.flush_surface_with_access(
+        &mut surface,
+        skia_safe::surface::BackendSurfaceAccess::Present,
+        &Default::default(),
+    );
+    println!("context.flush_surface_with_access");
+
+    {
+        let canvas = surface.canvas();
+        canvas.draw_rect(skia_safe::Rect::new(5.0, 5.0, 20.0, 20.0), &paint_fill);
+        println!("canvas draw rect");
+    }
     context.flush_surface_with_access(
         &mut surface,
         skia_safe::surface::BackendSurfaceAccess::Present,

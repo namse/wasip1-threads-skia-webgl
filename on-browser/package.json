@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "watch": "vite build --sourcemap inline --watch",
     "build": "tsc && vite build --sourcemap inline",
     "preview": "vite preview"
   },
