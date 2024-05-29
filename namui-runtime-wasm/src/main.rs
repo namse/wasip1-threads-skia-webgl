@@ -58,19 +58,63 @@ async fn real_main() {
     .expect("failed to wrap backend render target");
     println!("surface");
 
-    surface.canvas().clear(skia_safe::Color::BLACK);
-    println!("canvas clear to black");
-    context.flush(None);
-    println!("context flush");
+    {
+        let canvas = surface.canvas();
 
-    surface.canvas().draw_line(
-        (1, 1),
-        (50, 50),
-        &skia_safe::paint::Paint::new(skia_safe::Color4f::new(1.0, 0.0, 0.0, 1.0), None),
+        canvas.clear(skia_safe::Color::BLUE);
+        println!("canvas clear to blue");
+    }
+
+    context.flush_surface_with_access(
+        &mut surface,
+        skia_safe::surface::BackendSurfaceAccess::Present,
+        &Default::default(),
     );
-    println!("canvas clear to black");
-    context.flush(None);
-    println!("context flush");
+    println!("context.flush_surface_with_access");
+
+    let mut paint_fill =
+        skia_safe::paint::Paint::new(skia_safe::Color4f::from(skia_safe::Color::YELLOW), None);
+    paint_fill.set_style(skia_safe::PaintStyle::Fill);
+
+    let mut paint_stroke =
+        skia_safe::paint::Paint::new(skia_safe::Color4f::from(skia_safe::Color::RED), None);
+    paint_stroke.set_style(skia_safe::PaintStyle::Stroke);
+    paint_stroke.set_stroke_width(5.0);
+    paint_stroke.set_stroke_cap(skia_safe::PaintCap::Butt);
+    paint_stroke.set_stroke_join(skia_safe::PaintJoin::Miter);
+    paint_stroke.set_stroke_miter(4.0);
+
+    {
+        let canvas = surface.canvas();
+
+        canvas.draw_line((1, 1), (50, 50), &paint_stroke);
+        println!("canvas draw line");
+
+        canvas.draw_rect(skia_safe::Rect::new(5.0, 5.0, 20.0, 20.0), &paint_fill);
+        canvas.draw_rect(skia_safe::Rect::new(5.0, 5.0, 20.0, 20.0), &paint_stroke);
+        println!("canvas draw rect");
+    }
+
+    context.flush_surface_with_access(
+        &mut surface,
+        skia_safe::surface::BackendSurfaceAccess::Present,
+        &Default::default(),
+    );
+    println!("context.flush_surface_with_access");
+
+    {
+        let canvas = surface.canvas();
+
+        canvas.draw_circle((50, 50), 10.0, &paint_fill);
+        println!("canvas draw circle");
+    }
+
+    context.flush_surface_with_access(
+        &mut surface,
+        skia_safe::surface::BackendSurfaceAccess::Present,
+        &Default::default(),
+    );
+    println!("context.flush_surface_with_access");
 }
 
 extern "C" {
@@ -86,15 +130,11 @@ extern "C" {
 const ALIGN: usize = 4;
 #[no_mangle]
 pub extern "C" fn _malloc(size: usize) -> *mut c_void {
-    println!("malloc: {:?}", size);
     // make sure, result should be power of 2
-
     unsafe {
         let aligned_size = (size + (ALIGN - 1)) & !(ALIGN - 1); // round up to nearest multiple of align
         let layout = std::alloc::Layout::from_size_align(aligned_size, ALIGN).unwrap();
-        println!("layout: {:?}", layout);
         let buf = std::alloc::alloc(layout);
-        println!("buf: {:?}", buf);
         buf as *mut c_void
     }
 }

@@ -1,20 +1,3 @@
-const MEMORY64 = 1;
-const POINTER_SIZE = MEMORY64 ? 8 : 4;
-// const POINTER_MAX = MEMORY64 ? "Number.MAX_SAFE_INTEGER" : "0xFFFFFFFF";
-// const STACK_ALIGN = 16;
-// const POINTER_BITS = POINTER_SIZE * 8;
-// const POINTER_TYPE = `u${POINTER_BITS}`;
-// const WASM_BIGINT = true;
-// Whether we may be accessing the address 2GB or higher. If so, then we need
-// to interpret incoming i32 pointers as unsigned.
-//
-// This setting does not apply (and is never set to true) under MEMORY64, since
-// in that case we get 64-bit pointers coming through to JS (converting them to
-// i53 in most cases).
-const CAN_ADDRESS_2GB = false;
-// const ASSERTIONS = 2;
-let fixedFunctionProgram: any = null;
-
 export function createImportObject({
   memory: importMemory,
   module,
@@ -41,8 +24,8 @@ export function createImportObject({
 
   for (const key in glFunctions) {
     const original = glFunctions[key];
-    glFunctions[key] = (...args: any) => {
-      console.debug(key, args);
+    glFunctions[key] = (...args: (number | bigint)[]) => {
+      console.debug(key, args.map((x) => x.toString(16)).join(","));
       return original(...args);
     };
   }
@@ -85,7 +68,28 @@ function envGl({
   webgl: WebGL2RenderingContext | undefined;
   memory: WebAssembly.Memory;
 }) {
-  const stringCache: Record<number, number> = {};
+  const stringCache = new Map<number, number>();
+
+  const webglBufferMap = new Map<number, WebGLBuffer>();
+  let nextBufferId = 1;
+
+  type ProgramInfo = {
+    program: WebGLProgram;
+    nameToUniformLocation: Map<string, WebGLUniformLocation>;
+    uniformLocationNameToId: Map<string, number>;
+    idToUniformLocation: Map<number, WebGLUniformLocation>;
+  };
+  const programInfos = new Map<number, ProgramInfo>();
+  let nextProgramId = 1;
+
+  const webglShaderMap = new Map<number, WebGLShader>();
+  let nextShaderId = 1;
+
+  const webglVertexArrayMap = new Map<number, WebGLVertexArrayObject>();
+
+  const memoryView = new DataView(memory.buffer);
+
+  let currentProgramInfo: ProgramInfo | undefined;
 
   function stringToNewUTF8(string: string) {
     const bytes = new TextEncoder().encode(string);
@@ -101,23 +105,31 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.getStringi();
     },
-    glGetIntegerv: (pname: number, params: number) => {
+    /**
+     * @param pname
+     *  GLenum
+     * @param params_ptr
+     *  GLint
+     * @returns
+     */
+    glGetIntegerv: (pname: number, params_ptr: number) => {
       if (!webgl) {
         throw new Error("webgl is not set");
       }
+      console.debug("pname", pname.toString(16));
       switch (pname) {
-        case 0x8b8d: {
-          // GL_CURRENT_PROGRAM
-          // Just query directly so we're working with WebGL objects.
-          var cur = webgl.getParameter(webgl.CURRENT_PROGRAM);
-          if (cur == fixedFunctionProgram) {
-            // Pretend we're not using a program.
-
-            setValue(memory, params, 0, 0, "i32");
-            return;
+        case 0x821d: // GL_NUM_EXTENSIONS
+          {
+            const value = webgl.getSupportedExtensions.length;
+            memoryView.setInt32(params_ptr, value, true);
           }
           break;
-        }
+        default:
+          {
+            const value = webgl.getParameter(pname);
+            memoryView.setInt32(params_ptr, value, true);
+          }
+          break;
       }
     },
     glGetString: (name: number) => {
@@ -125,7 +137,7 @@ function envGl({
       if (!webgl) {
         throw new Error("webgl is not set");
       }
-      let ret = stringCache[name];
+      let ret = stringCache.get(name);
       if (ret) {
         return ret;
       }
@@ -174,7 +186,7 @@ function envGl({
             `GL_INVALID_ENUM in glGetString: Unknown parameter ${name}!`
           );
       }
-      stringCache[name] = ret;
+      stringCache.set(name, ret);
       return ret;
     },
     glUniform1fv: () => {
@@ -233,9 +245,45 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.stencilFunc();
     },
-    glShaderSource: () => {
-      throw new Error("not implemented");
-      // return webgl!.shaderSource();
+    /**
+     * void glShaderSource(
+     *   GLuint shader,
+     *   GLsizei count,
+     *   const GLchar **string,
+     *   const GLint *length);
+     */
+    glShaderSource: (
+      shaderId: number,
+      count: number,
+      string_ptr: number,
+      length_ptr: number
+    ) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const shader = webglShaderMap.get(shaderId);
+      if (!shader) {
+        throw new Error("shader not found");
+      }
+      const decoder = new TextDecoder();
+      let source = "";
+      for (let i = 0; i < count; i++) {
+        const ptr = memoryView.getUint32(string_ptr + i * 4, true);
+        const length = memoryView.getUint32(length_ptr + i * 4, true);
+
+        const bytes = new Uint8Array(memory.buffer, ptr, length);
+
+        // NOTE: I cannot use bytes directly. that makes error -> TypeError: Failed to execute 'decode' on 'TextDecoder': The provided ArrayBufferView value must not be shared.
+        const copied = new ArrayBuffer(bytes.byteLength);
+        new Uint8Array(copied).set(bytes);
+
+        source += decoder.decode(copied, {
+          stream: true,
+        });
+      }
+      source += decoder.decode();
+      console.debug("shader source", source);
+      webgl.shaderSource(shader, source);
     },
     glScissor: () => {
       throw new Error("not implemented");
@@ -248,9 +296,18 @@ function envGl({
     glPixelStorei: (pname: number, param: number) => {
       return webgl!.pixelStorei(pname, param);
     },
-    glLinkProgram: () => {
-      throw new Error("not implemented");
-      // return webgl!.linkProgram();
+    /**
+     * void glLinkProgram(GLuint program);
+     */
+    glLinkProgram: (programId: number) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const programInfo = programInfos.get(programId);
+      if (!programInfo) {
+        throw new Error("program not found");
+      }
+      webgl.linkProgram(programInfo.program);
     },
     glLineWidth: (width: number) => {
       return webgl!.lineWidth(width);
@@ -259,21 +316,133 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.isTexture();
     },
-    glGetUniformLocation: () => {
-      throw new Error("not implemented");
-      // return webgl!.getUniformLocation();
+    /**
+     * GLint glGetUniformLocation(
+     *  GLuint program,
+     *  const GLchar *name
+     * );
+     */
+    glGetUniformLocation: (programId: number, name_ptr: number): number => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const programInfo = programInfos.get(programId);
+      if (!programInfo) {
+        throw new Error("program not found");
+      }
+      const nameBytes = [];
+      while (true) {
+        const byte = memoryView.getUint8(name_ptr + nameBytes.length);
+        if (byte === 0) {
+          break;
+        }
+        nameBytes.push(byte);
+      }
+      const name = new TextDecoder().decode(new Uint8Array(nameBytes));
+      const cachedId = programInfo.uniformLocationNameToId.get(name);
+      if (cachedId !== undefined) {
+        return cachedId;
+      }
+
+      const location = webgl.getUniformLocation(programInfo.program, name);
+      if (!location) {
+        return -1;
+      }
+      programInfo.nameToUniformLocation.set(name, location);
+      const id = programInfo.nameToUniformLocation.size;
+      programInfo.uniformLocationNameToId.set(name, id);
+      programInfo.idToUniformLocation.set(id, location);
+      return id;
     },
-    glGetShaderiv: () => {
-      throw new Error("not implemented");
-      // return webgl!.getShaderiv();
+    /**
+     * void glGetShaderiv(
+     *  GLuint shader,
+     *  GLenum pname,
+     *  GLint *params);
+     */
+    glGetShaderiv: (shaderId: number, pname: number, params_ptr: number) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const shader = webglShaderMap.get(shaderId);
+      if (!shader) {
+        throw new Error("shader not found");
+      }
+
+      switch (pname) {
+        case 0x8b84: // INFO_LOG_LENGTH
+          {
+            const log = webgl.getShaderInfoLog(shader);
+            console.debug("shaderInfoLog", log);
+            memoryView.setInt32(params_ptr, log ? log.length + 1 : 0, true);
+          }
+          break;
+        case 0x8b88: // SHADER_SOURCE_LENGTH
+          {
+            throw new Error("not implemented");
+          }
+          break;
+        default: {
+          const value = webgl.getShaderParameter(shader, pname);
+          memoryView.setInt32(params_ptr, value, true);
+        }
+      }
     },
-    glGetShaderInfoLog: () => {
-      throw new Error("not implemented");
-      // return webgl!.getShaderInfoLog();
+    /**
+     * void glGetShaderInfoLog(
+     *  GLuint shader,
+     *  GLsizei maxLength,
+     *  GLsizei *length,
+     *  GLchar *infoLog
+     * );
+     */
+    glGetShaderInfoLog: (
+      shaderId: number,
+      maxLength: number,
+      length_ptr: number,
+      infoLog_ptr: number
+    ) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const shader = webglShaderMap.get(shaderId);
+      if (!shader) {
+        throw new Error("shader not found");
+      }
+      let log = webgl.getShaderInfoLog(shader);
+      if (!log) {
+        return memoryView.setInt32(length_ptr, 0, true);
+      }
+
+      if (log.length + 1 > maxLength) {
+        log = log.slice(0, maxLength - 1);
+      }
+
+      const bytes = new TextEncoder().encode(log);
+      const buffer = new Uint8Array(memory.buffer);
+      buffer.set(bytes, infoLog_ptr);
+      // add null terminator
+      buffer[infoLog_ptr + bytes.length] = 0;
+      memoryView.setInt32(length_ptr, bytes.length, true);
     },
-    glGetProgramiv: () => {
-      throw new Error("not implemented");
-      // return webgl!.getProgramiv();
+    /**
+     * void glGetProgramiv(
+     *  GLuint program,
+     *  GLenum pname,
+     *  GLint *params
+     * );
+     */
+    glGetProgramiv: (programId: number, pname: number, params_ptr: number) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const programInfo = programInfos.get(programId);
+      if (!programInfo) {
+        throw new Error("program not found");
+      }
+
+      const value = webgl.getProgramParameter(programInfo.program, pname);
+      memoryView.setInt32(params_ptr, value, true);
     },
     glGetProgramInfoLog: () => {
       throw new Error("not implemented");
@@ -294,9 +463,28 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.genTextures();
     },
-    glGenBuffers: () => {
-      throw new Error("not implemented");
-      // return webgl!.genBuffers();
+    /**
+     * @param n
+     *  GLsizei
+     *  Specifies the number of buffer object names to be generated.
+     *
+     *  @param buffers
+     *  GLuint *
+     *  Specifies an array in which the generated buffer object names are stored.
+     */
+    glGenBuffers: (n: number, buffers_ptr: number) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      for (let i = 0; i < n; i++) {
+        const buffer = webgl.createBuffer();
+        if (!buffer) {
+          throw new Error("Failed to create buffer");
+        }
+        const bufferId = nextBufferId++;
+        webglBufferMap.set(bufferId, buffer);
+        memoryView.setUint32(buffers_ptr + i * 4, bufferId, true);
+      }
     },
     glFrontFace: (mode: number) => {
       return webgl!.frontFace(mode);
@@ -337,28 +525,96 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.deleteTextures();
     },
-    glDeleteShader: () => {
-      throw new Error("not implemented");
-      // return webgl!.deleteShader();
+    /**
+     * void glDeleteShader(GLuint shader);
+     */
+    glDeleteShader: (shaderId: number) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const shader = webglShaderMap.get(shaderId);
+      if (!shader) {
+        throw new Error("shader not found");
+      }
+      webgl.deleteShader(shader);
+      webglShaderMap.delete(shaderId);
     },
-    glDeleteProgram: () => {
-      throw new Error("not implemented");
-      // return webgl!.deleteProgram();
+    /**
+     * void glDeleteProgram(GLuint program);
+     */
+    glDeleteProgram: (programId: number) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const programInfo = programInfos.get(programId);
+      if (!programInfo) {
+        throw new Error("program not found");
+      }
+      webgl.deleteProgram(programInfo.program);
+      programInfos.delete(programId);
+      if (currentProgramInfo === programInfo) {
+        currentProgramInfo = undefined;
+      }
     },
-    glDeleteBuffers: () => {
-      throw new Error("not implemented");
-      // return webgl!.deleteBuffers();
+    /**
+     * void glDeleteBuffers(
+     *  GLsizei n,
+     *  const GLuint * buffers
+     * );
+     */
+    glDeleteBuffers: (n: number, buffers_ptr: number) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      for (let i = 0; i < n; i++) {
+        const bufferId = memoryView.getUint32(buffers_ptr + i * 4, true);
+        const buffer = webglBufferMap.get(bufferId);
+        if (!buffer) {
+          throw new Error("buffer not found");
+        }
+        webgl.deleteBuffer(buffer);
+        webglBufferMap.delete(bufferId);
+      }
     },
     glCullFace: (mode: number) => {
       return webgl!.cullFace(mode);
     },
-    glCreateShader: (_type: number) => {
-      throw new Error("not implemented");
-      // return webgl!.createShader(type);
+    /**
+     * GLuint glCreateShader(
+     *  GLenum type
+     * );
+     */
+    glCreateShader: (type: number): number => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const shader = webgl.createShader(type);
+      if (!shader) {
+        throw new Error("Failed to create shader");
+      }
+      const shaderId = nextShaderId++;
+      webglShaderMap.set(shaderId, shader);
+      return shaderId;
     },
-    glCreateProgram: () => {
-      throw new Error("not implemented");
-      // return webgl!.createProgram();
+    /**
+     * GLuint glCreateProgram(void);
+     */
+    glCreateProgram: (): number => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const program = webgl.createProgram();
+      if (!program) {
+        throw new Error("Failed to create program");
+      }
+      const programId = nextProgramId++;
+      programInfos.set(programId, {
+        program,
+        nameToUniformLocation: new Map(),
+        uniformLocationNameToId: new Map(),
+        idToUniformLocation: new Map(),
+      });
+      return programId;
     },
     glCopyTexSubImage2D: (
       target: number,
@@ -425,9 +681,18 @@ function envGl({
         offset
       );
     },
-    glCompileShader: () => {
-      throw new Error("not implemented");
-      // return webgl!.compileShader();
+    /**
+     * void glCompileShader(GLuint shader);
+     */
+    glCompileShader: (shaderId: number) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const shader = webglShaderMap.get(shaderId);
+      if (!shader) {
+        throw new Error("shader not found");
+      }
+      webgl.compileShader(shader);
     },
     glColorMask: (red: number, green: number, blue: number, alpha: number) => {
       return webgl!.colorMask(!!red, !!green, !!blue, !!alpha);
@@ -441,11 +706,44 @@ function envGl({
     glClear: (mask: number) => {
       return webgl!.clear(mask);
     },
-    glBufferSubData: () => {
-      throw new Error("not implemented");
-      // return webgl!.bufferSubData();
+    /**
+     * void glBufferSubData(
+     *  GLenum target,
+     *  GLintptr offset,
+     *  GLsizeiptr size,
+     *  const void * data);
+     */
+    glBufferSubData: (
+      target: number,
+      offset: number,
+      size: number,
+      data_ptr: number
+    ) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const srcData = new Uint8Array(memory.buffer, data_ptr, size);
+      webgl.bufferSubData(target, offset, srcData, size);
     },
-    glBufferData: webgl?.bufferData.bind(webgl) || (() => {}),
+    /**
+     * void glBufferData(
+     *  GLenum target,
+     *  GLsizeiptr size,
+     *  const void * data,
+     *  GLenum usage);
+     */
+    glBufferData: (
+      target: number,
+      size: number,
+      data_ptr: number,
+      usage: number
+    ) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const srcData = new Uint8Array(memory.buffer, data_ptr, size);
+      webgl.bufferData(target, srcData, usage);
+    },
     glBlendFunc: webgl?.blendFunc.bind(webgl) || (() => {}),
     glBlendEquation: webgl?.blendEquation.bind(webgl) || (() => {}),
     glBlendColor: webgl?.blendColor.bind(webgl) || (() => {}),
@@ -453,17 +751,70 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.bindTexture();
     },
-    glBindBuffer: () => {
-      throw new Error("not implemented");
-      // return webgl!.bindBuffer();
+    /**
+     * void glBindBuffer(GLenum target, GLuint buffer);
+     *
+     */
+    glBindBuffer: (target: number, bufferId: number) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const buffer = webglBufferMap.get(bufferId);
+      if (!buffer) {
+        throw new Error("buffer not found");
+      }
+      webgl.bindBuffer(target, buffer);
     },
-    glBindAttribLocation: () => {
-      throw new Error("not implemented");
-      // return webgl!.bindAttribLocation();
+    /**
+     * void glBindAttribLocation(
+     *  GLuint program,
+     *  GLuint index,
+     *  const GLchar *name
+     * );
+     */
+    glBindAttribLocation: (
+      programId: number,
+      index: number,
+      name_ptr: number
+    ) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const programInfo = programInfos.get(programId);
+      if (!programInfo) {
+        throw new Error("program not found");
+      }
+      const nameBytes = [];
+      while (true) {
+        const byte = memoryView.getUint8(name_ptr + nameBytes.length);
+        if (byte === 0) {
+          break;
+        }
+        nameBytes.push(byte);
+      }
+      const name = new TextDecoder().decode(new Uint8Array(nameBytes));
+      console.debug("name", name);
+      webgl.bindAttribLocation(programInfo.program, index, name);
     },
-    glAttachShader: () => {
-      throw new Error("not implemented");
-      // return webgl!.attachShader();
+    /**
+     * void glAttachShader(
+     *  GLuint program,
+     *  GLuint shader
+     * );
+     */
+    glAttachShader: (programId: number, shaderId: number) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const programInfo = programInfos.get(programId);
+      if (!programInfo) {
+        throw new Error("program not found");
+      }
+      const shader = webglShaderMap.get(shaderId);
+      if (!shader) {
+        throw new Error("shader not found");
+      }
+      webgl.attachShader(programInfo.program, shader);
     },
     glActiveTexture: webgl?.activeTexture.bind(webgl) || (() => {}),
     glUniform2fv: () => {
@@ -506,10 +857,30 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.uniform3iv();
     },
-    glUniform4f: webgl?.uniform4f.bind(webgl) || (() => {}),
-    glUniform4fv: () => {
+    glUniform4f: () => {
       throw new Error("not implemented");
-      // return webgl!.uniform4fv();
+    },
+    /**
+     * void glUniform4fv(
+     *  GLint location,
+     *  GLsizei count,
+     *  const GLfloat *value
+     * );
+     */
+    glUniform4fv: (location_id: number, count: number, value_ptr: number) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      if (!currentProgramInfo) {
+        throw new Error("current program is not set");
+      }
+      const uniformLocation =
+        currentProgramInfo.idToUniformLocation.get(location_id);
+      if (!uniformLocation) {
+        throw new Error("uniform not found");
+      }
+      const value = new Float32Array(memory.buffer, value_ptr, count * 4);
+      webgl.uniform4fv(uniformLocation, value);
     },
     glViewport: webgl?.viewport.bind(webgl) || (() => {}),
     glVertexAttribPointer: webgl?.vertexAttribPointer.bind(webgl) || (() => {}),
@@ -529,9 +900,24 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.vertexAttrib1f();
     },
-    glUseProgram: () => {
-      throw new Error("not implemented");
-      // return webgl!.useProgram();
+    /**
+     * void glUseProgram(GLuint program);
+     */
+    glUseProgram: (programId: number) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      if (programId === 0) {
+        webgl.useProgram(null);
+        currentProgramInfo = undefined;
+        return;
+      }
+      const programInfo = programInfos.get(programId);
+      if (!programInfo) {
+        throw new Error("program not found");
+      }
+      webgl.useProgram(programInfo.program);
+      currentProgramInfo = programInfo;
     },
     glUniformMatrix4fv: () => {
       throw new Error("not implemented");
@@ -573,14 +959,24 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.deleteVertexArrays();
     },
-    glBindVertexArray: () => {
-      throw new Error("not implemented");
-      // return webgl!.bindVertexArray();
+    /**
+     * void glBindVertexArray(GLuint array);
+     */
+    glBindVertexArray: (arrayId: number) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      if (arrayId === 0) {
+        return webgl.bindVertexArray(null);
+      }
+      const vertexArray = webglVertexArrayMap.get(arrayId);
+      if (!vertexArray) {
+        throw new Error("vertexArray not found");
+      }
+      webgl.bindVertexArray(vertexArray);
     },
-    glDrawElementsInstanced: () => {
-      throw new Error("not implemented");
-      // return webgl!.drawElementsInstanced();
-    },
+    glDrawElementsInstanced:
+      webgl?.drawElementsInstanced.bind(webgl) || (() => {}),
     glDrawArraysInstanced: webgl?.drawArraysInstanced.bind(webgl) || (() => {}),
     glDrawElementsInstancedBaseVertexBaseInstanceWEBGL: () => {
       throw new Error("not implemented");
@@ -707,120 +1103,48 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.invalidateFramebuffer();
     },
+    /**
+     * void glGetShaderPrecisionFormat(
+     *  GLenum shaderType,
+     *  GLenum precisionType,
+     *  GLint *range,
+     *  GLint *precision
+     * );
+     * Parameters
+     *  shaderType
+     *  Specifies the type of shader whose precision to query. shaderType must be GL_VERTEX_SHADER or GL_FRAGMENT_SHADER.
+     *
+     *  precisionType
+     *  Specifies the numeric format whose precision and range to query.
+     *
+     *  range
+     *  Specifies the address of array of two integers into which encodings of the implementation's numeric range are returned.
+     *
+     *  precision
+     *  Specifies the address of an integer into which the numeric precision of the implementation is written.
+     */
     glGetShaderPrecisionFormat: (
       shaderType: number,
       precisionType: number,
-      range: number,
-      precision: number
+      rangePtr: number,
+      precisionPtr: number
     ) => {
-      const result = webgl!.getShaderPrecisionFormat(
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      const shaderPrecisionFormat = webgl.getShaderPrecisionFormat(
         shaderType,
         precisionType
-      )!;
-      setValue(memory, range, 0, result.rangeMin, "i32");
-      setValue(memory, range, 4, result.rangeMax, "i32");
-      setValue(memory, precision, 0, result.precision, "i32");
+      );
+      if (!shaderPrecisionFormat) {
+        throw new Error("Failed to get shader precision format");
+      }
+
+      memoryView.setInt32(rangePtr, shaderPrecisionFormat.rangeMin, true);
+      memoryView.setInt32(rangePtr + 4, shaderPrecisionFormat.rangeMax, true);
+      memoryView.setInt32(precisionPtr, shaderPrecisionFormat.precision, true);
     },
   };
-}
-
-/**
- * @param {number} ptr The pointer. Used to find both the slab and the offset in that slab. If the pointer
- *            is just an integer, then this is almost redundant, but in general the pointer type
- *            may in the future include information about which slab as well. So, for now it is
- *            possible to put |0| here, but if a pointer is available, that is more future-proof.
- * @param {number} pos The position in that slab - the offset. Added to any offset in the pointer itself.
- * @param {number} value The value to set.
- * @param {string} type A string defining the type. Used to find the slab (HEAPU8, HEAP16, HEAPU32, etc.).
- *             which means we should write to all slabs, ignore type differences if any on reads, etc.
- */
-function setValue(
-  memory: WebAssembly.Memory,
-  ptr: number,
-  pos: number,
-  value: number,
-  type: string
-) {
-  const offset = calcFastOffset(ptr, pos);
-  const heapOffset = getHeapOffset(offset, type);
-  const view = new DataView(memory.buffer);
-  switch (type) {
-    case "i1":
-    case "i8":
-      view.setUint8(heapOffset, value);
-      break;
-    case "u8":
-      view.setUint8(heapOffset, value);
-      break;
-    case "i16":
-      view.setInt16(heapOffset, value, true);
-      break;
-    case "u16":
-      view.setUint16(heapOffset, value, true);
-      break;
-    case "i32":
-      view.setInt32(heapOffset, value, true);
-      break;
-    case "u32":
-      view.setUint32(heapOffset, value, true);
-      break;
-    case "f32":
-      view.setFloat32(heapOffset, value, true);
-      break;
-    case "f64":
-      view.setFloat64(heapOffset, value, true);
-      break;
-    default:
-      throw new Error("invalid type");
-  }
-}
-
-function getHeapOffset(offset: number, type: string) {
-  const sz = getNativeTypeSize(type);
-  if (sz == 1) {
-    return offset;
-  }
-  if (MEMORY64) {
-    return offset / sz;
-  }
-  const shifts = Math.log(sz) / Math.LN2;
-  if (CAN_ADDRESS_2GB) {
-    return offset >>> shifts;
-  }
-  return offset >> shifts;
-}
-
-function getNativeTypeSize(type: string) {
-  // prettier-ignore
-  switch (type) {
-      case 'i1': case 'i8': case 'u8': return 1;
-      case 'i16': case 'u16': return 2;
-      case 'i32': case 'u32': return 4;
-      case 'i64': case 'u64': return 8;
-      case 'float': return 4;
-      case 'double': return 8;
-      default: {
-        if (type[type.length - 1] === '*') {
-          return POINTER_SIZE;
-        }
-        if (type[0] === 'i') {
-          const bits = Number(type.substr(1));
-          assert(bits % 8 === 0, `getNativeTypeSize invalid bits ${bits}, ${type} type`);
-          return bits / 8;
-        }
-        return 0;
-      }
-    }
-}
-
-function calcFastOffset(ptr: number, pos: number) {
-  return ptr + pos;
-}
-
-function assert(condition: boolean, text: string) {
-  if (!condition) {
-    throw new Error(text);
-  }
 }
 
 // https://github.com/yamt/wasi-libc/blob/a0c169f4facefc1c0d99b000c756e24ef103c2db/libc-top-half/musl/src/setjmp/wasm32/rt.c

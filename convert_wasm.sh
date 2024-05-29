@@ -1,5 +1,3 @@
-```bash
-
 INPUT_WASM_PATH=./namui-runtime-wasm/target/wasm32-wasip1-threads/debug/namui-runtime-wasm.wasm
 
 wasm-tools print $INPUT_WASM_PATH \
@@ -18,4 +16,3 @@ python3 /opt/emscripten/tools/wasm-sourcemap.py \
     --output namui-runtime-wasm.wasm.sourcemap \
     -u http://localhost:3000/namui-runtime-wasm.wasm.sourcemap \
     -w namui-runtime-wasm.wasm
-```
