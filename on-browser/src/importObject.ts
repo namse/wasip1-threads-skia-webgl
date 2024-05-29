@@ -1,10 +1,10 @@
 const MEMORY64 = 1;
 const POINTER_SIZE = MEMORY64 ? 8 : 4;
-const POINTER_MAX = MEMORY64 ? "Number.MAX_SAFE_INTEGER" : "0xFFFFFFFF";
-const STACK_ALIGN = 16;
-const POINTER_BITS = POINTER_SIZE * 8;
-const POINTER_TYPE = `u${POINTER_BITS}`;
-const WASM_BIGINT = true;
+// const POINTER_MAX = MEMORY64 ? "Number.MAX_SAFE_INTEGER" : "0xFFFFFFFF";
+// const STACK_ALIGN = 16;
+// const POINTER_BITS = POINTER_SIZE * 8;
+// const POINTER_TYPE = `u${POINTER_BITS}`;
+// const WASM_BIGINT = true;
 // Whether we may be accessing the address 2GB or higher. If so, then we need
 // to interpret incoming i32 pointers as unsigned.
 //
@@ -12,7 +12,7 @@ const WASM_BIGINT = true;
 // in that case we get 64-bit pointers coming through to JS (converting them to
 // i53 in most cases).
 const CAN_ADDRESS_2GB = false;
-const ASSERTIONS = 2;
+// const ASSERTIONS = 2;
 let fixedFunctionProgram: any = null;
 
 export function createImportObject({
@@ -33,15 +33,24 @@ export function createImportObject({
   free: (ptr: number) => void;
   webgl?: WebGL2RenderingContext;
 }) {
+  const glFunctions = envGl({
+    malloc,
+    webgl,
+    memory,
+  }) as any;
+
+  for (const key in glFunctions) {
+    const original = glFunctions[key];
+    glFunctions[key] = (...args: any) => {
+      console.debug(key, args);
+      return original(...args);
+    };
+  }
+
   return {
     env: {
       memory: importMemory,
-      ...envGl({
-        malloc,
-        free,
-        webgl,
-        memory,
-      }),
+      ...glFunctions,
       ...implSetJmp({
         memory,
         malloc,
@@ -73,12 +82,10 @@ export function createImportObject({
 
 function envGl({
   malloc,
-  free,
   webgl,
   memory,
 }: {
   malloc: (size: number) => number;
-  free: (ptr: number) => void;
   webgl: WebGL2RenderingContext | undefined;
   memory: WebAssembly.Memory;
 }) {
@@ -95,7 +102,8 @@ function envGl({
 
   return {
     glGetStringi: () => {
-      return webgl!.getStringi();
+      throw new Error("not implemented");
+      // return webgl!.getStringi();
     },
     glGetIntegerv: (pname: number, params: number) => {
       if (!webgl) {
@@ -348,7 +356,7 @@ function envGl({
     glCullFace: (mode: number) => {
       return webgl!.cullFace(mode);
     },
-    glCreateShader: (type: number) => {
+    glCreateShader: (_type: number) => {
       throw new Error("not implemented");
       // return webgl!.createShader(type);
     },
@@ -441,18 +449,10 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.bufferSubData();
     },
-    glBufferData: () => {
-      return webgl!.bufferData();
-    },
-    glBlendFunc: () => {
-      return webgl!.blendFunc();
-    },
-    glBlendEquation: () => {
-      return webgl!.blendEquation();
-    },
-    glBlendColor: () => {
-      return webgl!.blendColor();
-    },
+    glBufferData: webgl?.bufferData.bind(webgl) || (() => {}),
+    glBlendFunc: webgl?.blendFunc.bind(webgl) || (() => {}),
+    glBlendEquation: webgl?.blendEquation.bind(webgl) || (() => {}),
+    glBlendColor: webgl?.blendColor.bind(webgl) || (() => {}),
     glBindTexture: () => {
       throw new Error("not implemented");
       // return webgl!.bindTexture();
@@ -469,9 +469,7 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.attachShader();
     },
-    glActiveTexture: () => {
-      return webgl!.activeTexture();
-    },
+    glActiveTexture: webgl?.activeTexture.bind(webgl) || (() => {}),
     glUniform2fv: () => {
       throw new Error("not implemented");
       // return webgl!.uniform2fv();
@@ -512,13 +510,13 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.uniform3iv();
     },
-    glUniform4f: webgl?.uniform4f || (() => {}),
+    glUniform4f: webgl?.uniform4f.bind(webgl) || (() => {}),
     glUniform4fv: () => {
       throw new Error("not implemented");
       // return webgl!.uniform4fv();
     },
-    glViewport: webgl?.viewport || (() => {}),
-    glVertexAttribPointer: webgl?.vertexAttribPointer || (() => {}),
+    glViewport: webgl?.viewport.bind(webgl) || (() => {}),
+    glVertexAttribPointer: webgl?.vertexAttribPointer.bind(webgl) || (() => {}),
     glVertexAttrib4fv: () => {
       throw new Error("not implemented");
       // return webgl!.vertexAttrib4fv();
@@ -587,14 +585,14 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.drawElementsInstanced();
     },
-    glDrawArraysInstanced: webgl?.drawArraysInstanced || (() => {}),
+    glDrawArraysInstanced: webgl?.drawArraysInstanced.bind(webgl) || (() => {}),
     glDrawElementsInstancedBaseVertexBaseInstanceWEBGL: () => {
       throw new Error("not implemented");
     },
     glDrawArraysInstancedBaseInstanceWEBGL: () => {
       throw new Error("not implemented");
     },
-    glReadBuffer: webgl?.readBuffer || (() => {}),
+    glReadBuffer: webgl?.readBuffer.bind(webgl) || (() => {}),
     glDrawBuffers: () => {
       throw new Error("not implemented");
       // return webgl!.drawBuffers();
@@ -605,10 +603,11 @@ function envGl({
     glMultiDrawArraysInstancedBaseInstanceWEBGL: () => {
       throw new Error("not implemented");
     },
-    glVertexAttribIPointer: webgl?.vertexAttribIPointer || (() => {}),
-    glVertexAttribDivisor: webgl?.vertexAttribDivisor || (() => {}),
-    glTexStorage2D: webgl?.texStorage2D || (() => {}),
-    glDrawRangeElements: webgl?.drawRangeElements || (() => {}),
+    glVertexAttribIPointer:
+      webgl?.vertexAttribIPointer.bind(webgl) || (() => {}),
+    glVertexAttribDivisor: webgl?.vertexAttribDivisor.bind(webgl) || (() => {}),
+    glTexStorage2D: webgl?.texStorage2D.bind(webgl) || (() => {}),
+    glDrawRangeElements: webgl?.drawRangeElements.bind(webgl) || (() => {}),
     glGenRenderbuffers: () => {
       throw new Error("not implemented");
       // return webgl!.createRenderbuffer();
@@ -633,16 +632,20 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.deleteFramebuffers();
     },
-    glCheckFramebufferStatus: webgl?.checkFramebufferStatus || (() => {}),
+    glCheckFramebufferStatus:
+      webgl?.checkFramebufferStatus.bind(webgl) || (() => {}),
     glBindRenderbuffer: () => {
       throw new Error("not implemented");
       // return webgl!.bindRenderbuffer();
     },
-    glBindFramebuffer: () => {
+    glBindFramebuffer: (target: number, framebuffer: number) => {
+      if (!framebuffer) {
+        return webgl!.bindFramebuffer(target, null);
+      }
       throw new Error("not implemented");
-      // return webgl!.bindFramebuffer();
+      // return webgl!.bindFramebuffer(target, unknown);
     },
-    glRenderbufferStorage: webgl?.renderbufferStorage || (() => {}),
+    glRenderbufferStorage: webgl?.renderbufferStorage.bind(webgl) || (() => {}),
     glGetRenderbufferParameteriv: () => {
       throw new Error("not implemented");
       // return webgl!.getRenderbufferParameteriv();
@@ -651,10 +654,10 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.getFramebufferAttachmentParameteriv();
     },
-    glGenerateMipmap: webgl?.generateMipmap || (() => {}),
+    glGenerateMipmap: webgl?.generateMipmap.bind(webgl) || (() => {}),
     glRenderbufferStorageMultisample:
       webgl?.renderbufferStorageMultisample || (() => {}),
-    glBlitFramebuffer: webgl?.blitFramebuffer || (() => {}),
+    glBlitFramebuffer: webgl?.blitFramebuffer.bind(webgl) || (() => {}),
     glDeleteSync: () => {
       throw new Error("not implemented");
       // return webgl!.deleteSync();
@@ -663,7 +666,7 @@ function envGl({
       throw new Error("not implemented");
       // return webgl!.clientWaitSync();
     },
-    glCopyBufferSubData: webgl?.copyBufferSubData || (() => {}),
+    glCopyBufferSubData: webgl?.copyBufferSubData.bind(webgl) || (() => {}),
     glWaitSync: () => {
       throw new Error("not implemented");
       // return webgl!.waitSync();
@@ -1025,7 +1028,7 @@ function implMath({
     return mallocFloat64(result);
   };
 
-  const fixunstfsi = (a: number, b: number) => {
+  const fixunstfsi = (a: number, _b: number) => {
     const a1 = new Float64Array(memory.buffer, a, 1)[0];
     return Math.floor(a1);
   };
@@ -1050,7 +1053,7 @@ function implMath({
     return a1 !== b1 ? 1 : 0;
   };
 
-  const fixtfsi = (a: number, b: number) => {
+  const fixtfsi = (a: number, _b: number) => {
     const a1 = new Float64Array(memory.buffer, a, 1)[0];
     return Math.floor(a1);
   };
@@ -1085,12 +1088,12 @@ function implMath({
     return a1 > b1 ? 1 : 0;
   };
 
-  const trunctfsf2 = (a: number, b: number) => {
+  const trunctfsf2 = (a: number, _b: number) => {
     const a1 = new Float64Array(memory.buffer, a, 1)[0];
     return mallocFloat32(a1);
   };
 
-  const trunctfdf2 = (a: number, b: number) => {
+  const trunctfdf2 = (a: number, _b: number) => {
     const a1 = new Float64Array(memory.buffer, a, 1)[0];
     return mallocFloat64(a1);
   };

@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2021"
 
 [dependencies]
-tokio = { path = "./tokio/tokio", features = [
+tokio = { path = "../tokio/tokio", features = [
     "sync",
     "macros",
     "io-util",
@@ -13,15 +13,13 @@ tokio = { path = "./tokio/tokio", features = [
     "time",
     # "full",
 ] }
-skia-safe = { path = "./rust-skia/skia-safe", features = ["gl"] }
+skia-safe = { path = "../rust-skia/skia-safe", features = ["gl"] }
 
 [package.metadata.wasm-pack.profile.dev.wasm-bindgen]
 dwarf-debug-info = true
 
-[profile.release]
-lto = true
-opt-level = 3
-
 [profile.dev]
-lto = true
-opt-level = 2
+opt-level = 1
+debug = true
+# split-debuginfo = "packed"
+# strip = "symbols"

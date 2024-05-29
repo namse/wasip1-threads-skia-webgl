@@ -1,2 +1,5 @@
 target/
 out.wat
+*.dwarf
+*.wasm
+*.wasm.sourcemap

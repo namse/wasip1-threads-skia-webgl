@@ -47,7 +47,7 @@ async fn real_main() {
         skia_safe::gpu::backend_render_targets::make_gl((100, 100), 1, 0, framebuffer_info);
     println!("backend_render_target");
 
-    let surface = skia_safe::gpu::surfaces::wrap_backend_render_target(
+    let mut surface = skia_safe::gpu::surfaces::wrap_backend_render_target(
         &mut context,
         &backend_render_target,
         skia_safe::gpu::SurfaceOrigin::TopLeft,
@@ -56,7 +56,12 @@ async fn real_main() {
         None,
     )
     .expect("failed to wrap backend render target");
-    println!("surface")
+    println!("surface");
+
+    surface.canvas().clear(skia_safe::Color::BLACK);
+    println!("canvas clear to black");
+    context.flush(None);
+    println!("context flush");
 }
 
 extern "C" {

@@ -3,16 +3,17 @@ target = "wasm32-wasip1-threads"
 rustflags = [
     "--cfg",
     "tokio_unstable",
-    "-C",
-    "target-feature=-crt-static",
-    "-L",
-    "/opt/wasi-sdk/share/wasi-sysroot/lib/wasm32-wasip1-threads",
+    "-Ctarget-feature=-crt-static",
+    "-L/opt/wasi-sdk/share/wasi-sysroot/lib/wasm32-wasip1-threads",
     # wasm-ld --initial-memory 20MB
-    "-C",
-    "link-arg=--initial-memory=20971520",
+    "-Clink-arg=--initial-memory=20971520",
     # wasm-ld --max-memory 1G
-    "-C",
-    "link-arg=--max-memory=1073741824",
+    "-Clink-arg=--max-memory=1073741824",
+    # pass -g to clang, not to wasm-ld
+    # "--remap-path-prefix",
+    # "src/=/wasm/debug",
+    # "-Clink-arg=-gsplit-dwarf",
+    # "-Clink-arg=-gdwarf-5",
 ]
 
 [target.wasm32-wasip1-threads]
