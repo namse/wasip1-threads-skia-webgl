@@ -6,14 +6,13 @@ console.debug("hello world from thread-worker");
 self.onmessage = async (message) => {
   console.debug("event on thread-worker", message.data);
 
-  const { tid, nextTid, importMemory, module, start_arg_ptr } =
-    message.data as {
-      tid: number;
-      nextTid: SharedArrayBuffer;
-      importMemory: WebAssembly.Memory;
-      module: WebAssembly.Module;
-      start_arg_ptr: number;
-    };
+  const { tid, nextTid, importMemory, module, startArgPtr } = message.data as {
+    tid: number;
+    nextTid: SharedArrayBuffer;
+    importMemory: WebAssembly.Memory;
+    module: WebAssembly.Module;
+    startArgPtr: number;
+  };
 
   const args = ["bin", "arg1", "arg2"];
   const env = ["FOO=bar"];
@@ -43,7 +42,7 @@ self.onmessage = async (message) => {
   exports = instance.exports as Record<string, Function>;
 
   wasi.initialize(instance as any);
-  console.debug("before wasi_thread_start", tid, start_arg_ptr);
-  (instance.exports.wasi_thread_start as any)(tid, start_arg_ptr);
+  console.debug("before wasi_thread_start", tid, startArgPtr);
+  (instance.exports.wasi_thread_start as any)(tid, startArgPtr);
   console.debug("after wasi_thread_start");
 };

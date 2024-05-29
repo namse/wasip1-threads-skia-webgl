@@ -21,11 +21,11 @@ async fn real_main() {
     })
     .expect("failed to load gl interface");
 
-    println!("good!, interface: {:?}", interface);
+    println!("make interface");
 
     let mut context = skia_safe::gpu::direct_contexts::make_gl(interface, None)
         .expect("failed to create gl direct context");
-    println!("context");
+    println!("make context");
 
     let framebuffer_info = {
         let mut fboid: i32 = 0;
@@ -44,33 +44,19 @@ async fn real_main() {
     };
 
     let backend_render_target =
-        skia_safe::gpu::backend_render_targets::make_gl((100, 100), 1, 0, framebuffer_info);
-    println!("backend_render_target");
+        skia_safe::gpu::backend_render_targets::make_gl((300, 150), 1, 0, framebuffer_info);
+    println!("make backend_render_target");
 
     let mut surface = skia_safe::gpu::surfaces::wrap_backend_render_target(
         &mut context,
         &backend_render_target,
-        skia_safe::gpu::SurfaceOrigin::TopLeft,
+        skia_safe::gpu::SurfaceOrigin::BottomLeft,
         skia_safe::ColorType::RGBA8888,
         None,
         None,
     )
     .expect("failed to wrap backend render target");
-    println!("surface");
-
-    {
-        let canvas = surface.canvas();
-
-        canvas.clear(skia_safe::Color::BLUE);
-        println!("canvas clear to blue");
-    }
-
-    context.flush_surface_with_access(
-        &mut surface,
-        skia_safe::surface::BackendSurfaceAccess::Present,
-        &Default::default(),
-    );
-    println!("context.flush_surface_with_access");
+    println!("make surface");
 
     let mut paint_fill =
         skia_safe::paint::Paint::new(skia_safe::Color4f::from(skia_safe::Color::YELLOW), None);
@@ -84,37 +70,23 @@ async fn real_main() {
     paint_stroke.set_stroke_join(skia_safe::PaintJoin::Miter);
     paint_stroke.set_stroke_miter(4.0);
 
+    const PNG: &[u8] = include_bytes!("./image1616.png");
+    const JPG: &[u8] = include_bytes!("./image1616.jpg");
+
+    let png_image = skia_safe::Image::from_encoded(skia_safe::Data::new_copy(PNG))
+        .expect("failed to decode png image");
+    let jpg_image = skia_safe::Image::from_encoded(skia_safe::Data::new_copy(JPG))
+        .expect("failed to decode jpg image");
+
     {
         let canvas = surface.canvas();
 
+        canvas.clear(skia_safe::Color::BLUE);
         canvas.draw_line((1, 1), (50, 50), &paint_stroke);
-        println!("canvas draw line");
-    }
-
-    context.flush_surface_with_access(
-        &mut surface,
-        skia_safe::surface::BackendSurfaceAccess::Present,
-        &Default::default(),
-    );
-    println!("context.flush_surface_with_access");
-
-    {
-        let canvas = surface.canvas();
         canvas.draw_rect(skia_safe::Rect::new(5.0, 5.0, 20.0, 20.0), &paint_fill);
-        println!("canvas draw rect");
-    }
-    context.flush_surface_with_access(
-        &mut surface,
-        skia_safe::surface::BackendSurfaceAccess::Present,
-        &Default::default(),
-    );
-    println!("context.flush_surface_with_access");
-
-    {
-        let canvas = surface.canvas();
-
         canvas.draw_circle((50, 50), 10.0, &paint_fill);
-        println!("canvas draw circle");
+        canvas.draw_image(png_image, (20, 20), None);
+        canvas.draw_image(jpg_image, (60, 60), None);
     }
 
     context.flush_surface_with_access(

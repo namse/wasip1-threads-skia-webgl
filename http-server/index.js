@@ -1,6 +1,5 @@
 const express = require("express");
 const path = require("path");
-const fs = require("fs");
 
 const app = express();
 
@@ -29,18 +28,6 @@ app.get("/namui-runtime-wasm.wasm", (req, res) => {
 app.get("/namui-runtime-wasm.wasm.sourcemap", (req, res) => {
   res.sendFile(path.join(__dirname, "../namui-runtime-wasm.wasm.sourcemap"));
 });
-
-// app.get("/wasm/debug", (req, res) => {
-//   console.log("req.headers", req.headers);
-//   // send mime type wasm
-//   res.setHeader("Content-Type", "application/wasm");
-//   res.sendFile(
-//     path.join(
-//       __dirname,
-//       "../namui-runtime-wasm/target/wasm32-wasip1-threads/debug/namui-runtime-wasm.wasm"
-//     )
-//   );
-// });
 
 app.listen(3000, () => {
   console.log("Server started on http://localhost:3000");

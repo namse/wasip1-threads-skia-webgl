@@ -1,5 +1,6 @@
 import { WASI, File, OpenFile, ConsoleStdout } from "@bjorn3/browser_wasi_shim";
 import { createImportObject } from "./importObject";
+import wasmUrl from "../../namui-runtime-wasm.wasm?url";
 
 console.debug("crossOriginIsolated", crossOriginIsolated);
 
@@ -24,9 +25,7 @@ self.onmessage = async (message) => {
   const { canvas } = message.data as { canvas: OffscreenCanvas };
   const webgl = canvas.getContext("webgl2")!;
 
-  const module = await WebAssembly.compileStreaming(
-    fetch("/namui-runtime-wasm.wasm")
-  );
+  const module = await WebAssembly.compileStreaming(fetch(wasmUrl));
 
   let exports: {
     _malloc: (size: number) => number;
