@@ -70,23 +70,39 @@ async fn real_main() {
     paint_stroke.set_stroke_join(skia_safe::PaintJoin::Miter);
     paint_stroke.set_stroke_miter(4.0);
 
+    let mut text_paint =
+        skia_safe::paint::Paint::new(skia_safe::Color4f::from(skia_safe::Color::WHITE), None);
+    text_paint.set_anti_alias(true);
+    text_paint.set_style(skia_safe::PaintStyle::Fill);
+
     const PNG: &[u8] = include_bytes!("./image1616.png");
     const JPG: &[u8] = include_bytes!("./image1616.jpg");
+    const FONT: &[u8] = include_bytes!("./NotoSansKR-Regular.woff2");
 
     let png_image = skia_safe::Image::from_encoded(skia_safe::Data::new_copy(PNG))
         .expect("failed to decode png image");
     let jpg_image = skia_safe::Image::from_encoded(skia_safe::Data::new_copy(JPG))
         .expect("failed to decode jpg image");
+    let typeface = skia_safe::FontMgr::default()
+        .new_from_data(FONT, None)
+        .expect("failed to create typeface");
+    let font = skia_safe::Font::from_typeface(typeface, Some(12.0));
+    let text_blob =
+        skia_safe::TextBlob::new("hello world! 안녕!", &font).expect("failed to create text blob");
 
     {
         let canvas = surface.canvas();
 
         canvas.clear(skia_safe::Color::BLUE);
+
         canvas.draw_line((1, 1), (50, 50), &paint_stroke);
         canvas.draw_rect(skia_safe::Rect::new(5.0, 5.0, 20.0, 20.0), &paint_fill);
         canvas.draw_circle((50, 50), 10.0, &paint_fill);
+
         canvas.draw_image(png_image, (20, 20), None);
         canvas.draw_image(jpg_image, (60, 60), None);
+
+        canvas.draw_text_blob(text_blob, (80, 80), &text_paint);
     }
 
     context.flush_surface_with_access(

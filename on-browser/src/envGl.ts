@@ -1,3 +1,8 @@
+import {
+  computeUnpackAlignedImageSize,
+  getSizePerPixel,
+} from "./getSizePerPixel";
+
 export function envGl({
   malloc,
   webgl,
@@ -69,7 +74,7 @@ export function envGl({
       }
       console.debug("pname", pname.toString(16));
       switch (pname) {
-        case 0x821d: // GL_NUM_EXTENSIONS
+        case 33309: // GL_NUM_EXTENSIONS
           {
             const value = webgl.getSupportedExtensions.length;
             memoryView.setInt32(paramsPtr, value, true);
@@ -93,13 +98,13 @@ export function envGl({
         return ret;
       }
       switch (name) {
-        case 0x1f03 /* GL_EXTENSIONS */:
+        case 7939 /* GL_EXTENSIONS */:
           ret = stringToNewUTF8(webgl.getSupportedExtensions()!.join(" "));
           break;
-        case 0x1f00 /* GL_VENDOR */:
-        case 0x1f01 /* GL_RENDERER */:
-        case 0x9245 /* UNMASKED_VENDOR_WEBGL */:
-        case 0x9246 /* UNMASKED_RENDERER_WEBGL */:
+        case 7936 /* GL_VENDOR */:
+        case 7937 /* GL_RENDERER */:
+        case 37445 /* UNMASKED_VENDOR_WEBGL */:
+        case 37446 /* UNMASKED_RENDERER_WEBGL */:
           const paramter = webgl.getParameter(name);
           console.debug("paramter", paramter);
 
@@ -112,16 +117,16 @@ export function envGl({
 
           ret = stringToNewUTF8(paramter);
           break;
-        case 0x1f02 /* GL_VERSION */:
-          let glVersion = webgl.getParameter(0x1f02 /*GL_VERSION*/);
+        case 7938 /* GL_VERSION */:
+          let glVersion = webgl.getParameter(7938 /*GL_VERSION*/);
           // return GLES version string corresponding to the version of the WebGL context
           glVersion = `OpenGL ES 3.0 (${glVersion})`;
           console.debug("glVersion", glVersion);
           ret = stringToNewUTF8(glVersion);
           break;
-        case 0x8b8c /* GL_SHADING_LANGUAGE_VERSION */:
+        case 35724 /* GL_SHADING_LANGUAGE_VERSION */:
           let glslVersion = webgl.getParameter(
-            0x8b8c /*GL_SHADING_LANGUAGE_VERSION*/
+            35724 /*GL_SHADING_LANGUAGE_VERSION*/
           );
           // extract the version number 'N.M' from the string 'WebGL GLSL ES N.M ...'
           const ver_re = /^WebGL GLSL ES ([0-9]\.[0-9][0-9]?)(?:$| .*)/;
@@ -185,38 +190,19 @@ export function envGl({
       if (!webgl) {
         throw new Error("webgl is not set");
       }
-      /*
-        One of the following objects can be used as a pixel source for the texture:
 
-        Uint8Array (Must be used if type is gl.UNSIGNED_BYTE)
-        Uint16Array (Must be used if type is either gl.UNSIGNED_SHORT_5_6_5, 
-             gl.UNSIGNED_SHORT_4_4_4_4, gl.UNSIGNED_SHORT_5_5_5_1, 
-             or ext.HALF_FLOAT_OES)
-        Float32Array (Must be used if type is gl.FLOAT)
-      */
-      let pixels: ArrayBufferView;
-      switch (type) {
-        case webgl.UNSIGNED_BYTE:
-          pixels = new Uint8Array(memory.buffer, pixelsPtr, width * height * 4);
-          break;
-        case webgl.UNSIGNED_SHORT_5_6_5:
-        case webgl.UNSIGNED_SHORT_4_4_4_4:
-        case webgl.UNSIGNED_SHORT_5_5_5_1:
-          pixels = new Uint16Array(
-            memory.buffer,
-            pixelsPtr,
-            width * height * 2
-          );
-          break;
-        case webgl.FLOAT:
-          pixels = new Float32Array(
-            memory.buffer,
-            pixelsPtr,
-            width * height * 4
-          );
-          break;
-        default:
-          throw new Error(`Unsupported type: ${type}`);
+      const sizePerPixel = getSizePerPixel(webgl, format, type);
+      const bytes = computeUnpackAlignedImageSize(
+        webgl,
+        width,
+        height,
+        sizePerPixel
+      );
+      const pixels = new Uint8Array(memory.buffer, pixelsPtr, bytes);
+      if (pixels.byteLength !== bytes) {
+        throw new Error(
+          `Expected ${bytes} bytes but got ${pixels.byteLength} bytes`
+        );
       }
       webgl.texSubImage2D(
         target,
@@ -408,14 +394,14 @@ export function envGl({
       }
 
       switch (pname) {
-        case 0x8b84: // INFO_LOG_LENGTH
+        case 35716: // INFO_LOG_LENGTH
           {
             const log = webgl.getShaderInfoLog(shader);
             console.debug("shaderInfoLog", log);
             memoryView.setInt32(paramsPtr, log ? log.length + 1 : 0, true);
           }
           break;
-        case 0x8b88: // SHADER_SOURCE_LENGTH
+        case 35720: // SHADER_SOURCE_LENGTH
           {
             throw new Error("not implemented");
           }
@@ -1637,9 +1623,25 @@ export function envGl({
     glVertexAttribDivisor: webgl?.vertexAttribDivisor.bind(webgl) || (() => {}),
     glTexStorage2D: webgl?.texStorage2D.bind(webgl) || (() => {}),
     glDrawRangeElements: webgl?.drawRangeElements.bind(webgl) || (() => {}),
-    glGenRenderbuffers: () => {
-      throw new Error("not implemented");
-      // return webgl!.createRenderbuffer();
+    /**
+     * void glGenRenderbuffers(
+     *  GLsizei n,
+     *  GLuint *renderbuffers
+     * );
+     */
+    glGenRenderbuffers: (n: number, renderbuffersPtr: number) => {
+      if (!webgl) {
+        throw new Error("webgl is not set");
+      }
+      for (let i = 0; i < n; i++) {
+        const renderbuffer = webgl.createRenderbuffer();
+        if (!renderbuffer) {
+          throw new Error("Failed to create renderbuffer");
+        }
+        const renderbufferId = nextRenderbufferId++;
+        webglRenderbufferMap.set(renderbufferId, renderbuffer);
+        memoryView.setUint32(renderbuffersPtr + i * 4, renderbufferId, true);
+      }
     },
     /**
      * void glGenFramebuffers(
